@@ -14,13 +14,15 @@ import (
 
 type Hash uint64
 
-func HashFile(file string) (*Object, error) {
+func HashFile(file string, root string) (*Object, error) {
 	var err error
 	var fd *os.File
 	var b bytes.Buffer
 	var sz int64
 
+	root = path.Clean(root)
 	name := path.Clean(file)
+	suffix := name[len(root):]
 	if fd, err = os.Open(name); err != nil {
 		return nil, err
 	}
@@ -33,11 +35,12 @@ func HashFile(file string) (*Object, error) {
 	}
 
 	tags := map[string]interface{}{}
-	dir := name
-	var elem string
+	dir, elem := path.Split(suffix)
 	for {
 		dir, elem = path.Split(dir)
-		tags[elem] = nil
+		if elem != "" {
+			tags[elem] = nil
+		}
 		if dir == "" {
 			break
 		}
@@ -157,8 +160,8 @@ func (r *Repository) ObjectsByTag(tag string) []*Object {
 	return objects
 }
 
-func (r *Repository) AddFile(file string) error {
-	if obj, err := HashFile(file); err == nil {
+func (r *Repository) AddFile(file string, root string) error {
+	if obj, err := HashFile(file, root); err == nil {
 		return r.Add(obj)
 	} else {
 		return err
