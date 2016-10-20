@@ -1,24 +1,23 @@
-package main
+package memory
 
 import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/johnweldon/consolidate/storage"
+	"github.com/johnweldon/consolidate/storage/factory"
 )
 
-// Repository is the overall storage unit
-type Repository interface {
-	AddFile(file string, root string) error
-	AllNames() []string
-	AllTags() []string
+func init() {
+	factory.Registry.Add("memory", newRepository)
 }
 
-// NewRepository returns an initialized Repository
-func NewRepository() Repository {
+func newRepository() storage.Repository {
 	return &repository{
-		Objects: map[hashKey]*object{},
-		Names:   map[string]map[hashKey]*object{},
-		Tags:    map[string]map[hashKey]*object{},
+		Objects: map[uint64]storage.Object{},
+		Names:   map[string]map[uint64]storage.Object{},
+		Tags:    map[string]map[uint64]storage.Object{},
 	}
 }
 
@@ -26,12 +25,12 @@ type repository struct {
 	sync.Mutex
 	originalSize   uint64
 	compressedSize uint64
-	Objects        map[hashKey]*object
-	Names          map[string]map[hashKey]*object
-	Tags           map[string]map[hashKey]*object
+	Objects        map[uint64]storage.Object
+	Names          map[string]map[uint64]storage.Object
+	Tags           map[string]map[uint64]storage.Object
 }
 
-func (r *repository) Object(key hashKey) *object {
+func (r *repository) Object(key uint64) storage.Object {
 	if r == nil {
 		return nil
 	}
@@ -61,7 +60,7 @@ func (r *repository) AllTags() []string {
 	return listKeys(r.Tags)
 }
 
-func (r *repository) ObjectsByName(name string) []*object {
+func (r *repository) ObjectsByName(name string) []storage.Object {
 	if r == nil {
 		return nil
 	}
@@ -71,7 +70,7 @@ func (r *repository) ObjectsByName(name string) []*object {
 	return listObjects(name, r.Names)
 }
 
-func (r *repository) ObjectsByTag(tag string) []*object {
+func (r *repository) ObjectsByTag(tag string) []storage.Object {
 	if r == nil {
 		return nil
 	}
@@ -82,54 +81,54 @@ func (r *repository) ObjectsByTag(tag string) []*object {
 }
 
 func (r *repository) AddFile(file string, root string) error {
-	obj, err := hashFile(file, root)
+	obj, err := storage.NewObject(file, root)
 	if err != nil {
 		return err
 	}
 	return r.Add(obj)
 }
 
-func (r *repository) Add(o *object) error {
+func (r *repository) Add(o storage.Object) error {
 	if r == nil || o == nil {
-		return fmt.Errorf("nil object")
+		return fmt.Errorf("nil storage.Object")
 	}
 	r.Lock()
 	defer r.Unlock()
 
-	existing, ok := r.Objects[o.Hash]
+	existing, ok := r.Objects[o.Hash()]
 	if !ok {
-		r.Objects[o.Hash] = o
-		for name := range o.Names {
-			r.Names[name] = map[hashKey]*object{o.Hash: o}
+		r.Objects[o.Hash()] = o
+		for _, name := range o.Names() {
+			r.Names[name] = map[uint64]storage.Object{o.Hash(): o}
 		}
-		for tag := range o.Tags {
-			r.Tags[tag] = map[hashKey]*object{o.Hash: o}
+		for _, tag := range o.Tags() {
+			r.Tags[tag] = map[uint64]storage.Object{o.Hash(): o}
 		}
-		r.originalSize += uint64(o.Size)
-		r.compressedSize += uint64(len(o.compressedData))
+		r.originalSize += uint64(o.Size())
+		r.compressedSize += uint64(o.CompressedSize())
 		return nil
 	}
 
-	if existing.Size != o.Size {
-		return fmt.Errorf("hash collision %v and %v", existing.Names, o.Names)
+	if existing.Size() != o.Size() {
+		return fmt.Errorf("hash collision %v and %v", existing.Names(), o.Names())
 	}
 
-	r.originalSize += uint64(o.Size)
+	r.originalSize += uint64(o.Size())
 
-	for name := range o.Names {
-		existing.Names[name] = struct{}{}
+	for _, name := range o.Names() {
+		existing.AddName(name)
 		addKeyToRepo(name, o, r.Names)
 	}
 
-	for tag := range o.Tags {
-		existing.Tags[tag] = struct{}{}
+	for _, tag := range o.Tags() {
+		existing.AddTag(tag)
 		addKeyToRepo(tag, o, r.Tags)
 	}
 
 	return nil
 }
 
-func (r *repository) Remove(key hashKey) {
+func (r *repository) Remove(key uint64) {
 	if r == nil {
 		return
 	}
@@ -137,17 +136,17 @@ func (r *repository) Remove(key hashKey) {
 	defer r.Unlock()
 
 	var ok bool
-	var obj *object
+	var obj storage.Object
 	if obj, ok = r.Objects[key]; !ok {
 		return
 	}
 	delete(r.Objects, key)
-	for name := range obj.Names {
+	for _, name := range obj.Names() {
 		if m, ok := r.Names[name]; ok {
 			delete(m, key)
 		}
 	}
-	for tag := range obj.Tags {
+	for _, tag := range obj.Tags() {
 		if m, ok := r.Tags[tag]; ok {
 			delete(m, key)
 		}
@@ -166,7 +165,7 @@ func (r *repository) String() string {
 	return strings.Join(show, "\n")
 }
 
-func listKeys(m map[string]map[hashKey]*object) []string {
+func listKeys(m map[string]map[uint64]storage.Object) []string {
 	keys := []string{}
 	for key := range m {
 		keys = append(keys, key)
@@ -174,19 +173,19 @@ func listKeys(m map[string]map[hashKey]*object) []string {
 	return keys
 }
 
-func listObjects(key string, m map[string]map[hashKey]*object) []*object {
-	objects := []*object{}
+func listObjects(key string, m map[string]map[uint64]storage.Object) []storage.Object {
+	objects := []storage.Object{}
 	for _, obj := range m[key] {
 		objects = append(objects, obj)
 	}
 	return objects
 }
 
-func addKeyToRepo(key string, o *object, repo map[string]map[hashKey]*object) {
+func addKeyToRepo(key string, o storage.Object, repo map[string]map[uint64]storage.Object) {
 	if p, ok := repo[key]; ok {
-		p[o.Hash] = o
+		p[o.Hash()] = o
 	} else {
-		repo[key] = map[hashKey]*object{o.Hash: o}
+		repo[key] = map[uint64]storage.Object{o.Hash(): o}
 	}
 }
 
