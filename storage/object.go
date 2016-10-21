@@ -50,7 +50,7 @@ func NewObject(file string, root string) (Object, error) {
 		dir = dir[:len(dir)-1]
 	}
 
-	return &object{
+	return &rawObject{
 		hash:   h.Sum64(),
 		names:  map[string]interface{}{name: nil},
 		tags:   tags,
@@ -68,12 +68,13 @@ type Object interface {
 	CompressedSize() uint64
 	AddName(name string)
 	AddTag(tag string)
+	Data(dest io.Writer, decompress bool) error
 }
 
 var hashStrategy = fnvHasher
 var compressStrategy = zlibCompress
 
-type object struct {
+type rawObject struct {
 	hash   uint64
 	names  map[string]interface{}
 	tags   map[string]interface{}
@@ -81,13 +82,13 @@ type object struct {
 	zzData []byte
 }
 
-func (o *object) Hash() uint64           { return o.hash }
-func (o *object) Names() []string        { return mapKeys(o.names) }
-func (o *object) Tags() []string         { return mapKeys(o.tags) }
-func (o *object) Size() uint64           { return o.size }
-func (o *object) CompressedSize() uint64 { return uint64(len(o.zzData)) }
-func (o *object) AddName(name string)    { o.names[name] = struct{}{} }
-func (o *object) AddTag(tag string)      { o.tags[tag] = struct{}{} }
+func (o *rawObject) Hash() uint64           { return o.hash }
+func (o *rawObject) Names() []string        { return mapKeys(o.names) }
+func (o *rawObject) Tags() []string         { return mapKeys(o.tags) }
+func (o *rawObject) Size() uint64           { return o.size }
+func (o *rawObject) CompressedSize() uint64 { return uint64(len(o.zzData)) }
+func (o *rawObject) AddName(name string)    { o.names[name] = struct{}{} }
+func (o *rawObject) AddTag(tag string)      { o.tags[tag] = struct{}{} }
 
 func mapKeys(m map[string]interface{}) []string {
 	keys := []string{}
@@ -97,16 +98,19 @@ func mapKeys(m map[string]interface{}) []string {
 	return keys
 }
 
-func (o *object) Data(dest io.Writer) error {
+func (o *rawObject) Data(dest io.Writer, decompress bool) error {
 	if o == nil {
 		return fmt.Errorf("nil object")
 	}
-	var r io.Reader
-	var err error
 	b := bytes.NewBuffer(o.zzData)
-	if r, err = zlib.NewReader(b); err == nil {
-		_, err = io.Copy(dest, r)
+	var r io.Reader = b
+	var err error
+	if decompress {
+		if r, err = zlib.NewReader(b); err != nil {
+			return err
+		}
 	}
+	_, err = io.Copy(dest, r)
 	return err
 }
 
