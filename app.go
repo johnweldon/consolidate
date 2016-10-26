@@ -12,6 +12,7 @@ import (
 	"github.com/johnweldon/consolidate/storage"
 	"github.com/johnweldon/consolidate/storage/factory"
 	_ "github.com/johnweldon/consolidate/storage/memory"
+	_ "github.com/johnweldon/consolidate/storage/sqlite"
 )
 
 func appMain(c *cli.Context) error {
@@ -25,7 +26,7 @@ func appMain(c *cli.Context) error {
 
 	out, e, quit := make(chan string), make(chan error), make(chan interface{})
 	lctx := logContext{C: c, O: out, E: e, Q: quit}
-	ctx := appContext{C: c, R: factory.Registry.Create("memory"), O: out, E: e}
+	ctx := appContext{C: c, R: factory.Registry.Create("sqlite"), O: out, E: e}
 	defer fmt.Printf("Repository:\n%s\n", ctx.R)
 
 	go lctx.logger()

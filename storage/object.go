@@ -68,7 +68,8 @@ type Object interface {
 	CompressedSize() uint64
 	AddName(name string)
 	AddTag(tag string)
-	Data(dest io.Writer, decompress bool) error
+	WriteData(dest io.Writer, decompress bool) error
+	RawData() []byte
 }
 
 var hashStrategy = fnvHasher
@@ -98,7 +99,7 @@ func mapKeys(m map[string]interface{}) []string {
 	return keys
 }
 
-func (o *rawObject) Data(dest io.Writer, decompress bool) error {
+func (o *rawObject) WriteData(dest io.Writer, decompress bool) error {
 	if o == nil {
 		return fmt.Errorf("nil object")
 	}
@@ -112,6 +113,13 @@ func (o *rawObject) Data(dest io.Writer, decompress bool) error {
 	}
 	_, err = io.Copy(dest, r)
 	return err
+}
+
+func (o *rawObject) RawData() []byte {
+	if o == nil {
+		return nil
+	}
+	return o.zzData
 }
 
 func fnvHasher() hash.Hash64             { return fnv.New64a() }
