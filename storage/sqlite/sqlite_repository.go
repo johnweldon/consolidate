@@ -22,57 +22,20 @@ func newRepository() storage.Repository {
 	}
 }
 
-func (r *repository) init() {
-	if r.err != nil {
-		return
-	}
-	db, err := sql.Open("sqlite3", r.path)
-	if err != nil {
-		r.err = err
-		return
-	}
-	defer db.Close()
-	stmts := []string{
-		`create table if not exists objects (id integer not null primary key, size integer, data blob)`,
-		`create table if not exists names (id integer not null, name text)`,
-		`create table if not exists tags (id integer not null, tag text)`,
-	}
-	for _, stmt := range stmts {
-		if _, err = db.Exec(stmt); err != nil {
-			r.err = err
-			return
-		}
-	}
-}
-
 type repository struct {
-	m   sync.Mutex
 	o   sync.Once
 	err error
 
 	path string
-}
-
-func (r *repository) error() error {
-	if r == nil {
-		return fmt.Errorf("repository is nil")
-	}
-	r.o.Do(r.init)
-	return r.err
+	db   *sql.DB
 }
 
 func (r *repository) AllNames() []string {
 	if err := r.error(); err != nil {
 		return nil
 	}
-	db, err := sql.Open("sqlite3", r.path)
-	if err != nil {
-		r.err = err
-		return nil
-	}
-	defer db.Close()
 
-	rows, err := db.Query(`select name from names`)
+	rows, err := r.db.Query(`select distinct name from names order by name`)
 	if err != nil {
 		r.err = err
 		return nil
@@ -96,14 +59,8 @@ func (r *repository) AllTags() []string {
 	if err := r.error(); err != nil {
 		return nil
 	}
-	db, err := sql.Open("sqlite3", r.path)
-	if err != nil {
-		r.err = err
-		return nil
-	}
-	defer db.Close()
 
-	rows, err := db.Query(`select tag from tags`)
+	rows, err := r.db.Query(`select distinct tag from tags order by tag`)
 	if err != nil {
 		r.err = err
 		return nil
@@ -140,14 +97,7 @@ func (r *repository) Add(o storage.Object) error {
 		return err
 	}
 
-	db, err := sql.Open("sqlite3", r.path)
-	if err != nil {
-		r.err = err
-		return err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare(`insert or ignore into objects (id, size, data) values (?, ?, ?)`)
+	stmt, err := r.db.Prepare(`insert or ignore into objects (id, size, data) values (?, ?, ?)`)
 	if err != nil {
 		r.err = err
 		return err
@@ -159,7 +109,7 @@ func (r *repository) Add(o storage.Object) error {
 		return err
 	}
 
-	stmt, err = db.Prepare(`insert or ignore into names (id, name) values (?, ?)`)
+	stmt, err = r.db.Prepare(`insert or update into names (id, name) values (?, ?)`)
 	if err != nil {
 		r.err = err
 		return err
@@ -173,7 +123,7 @@ func (r *repository) Add(o storage.Object) error {
 		}
 	}
 
-	stmt, err = db.Prepare(`insert or ignore into tags (id, tag) values (?, ?)`)
+	stmt, err = r.db.Prepare(`insert or update into tags (id, tag) values (?, ?)`)
 	if err != nil {
 		r.err = err
 		return err
@@ -187,4 +137,40 @@ func (r *repository) Add(o storage.Object) error {
 		}
 	}
 	return nil
+}
+
+func (r *repository) init() {
+	if r.err != nil {
+		return
+	}
+	db, err := sql.Open("sqlite3", r.path)
+	if err != nil {
+		r.err = err
+		return
+	}
+	r.db = db
+
+	stmts := []string{
+		`create table if not exists objects (id integer not null primary key, size integer, data blob)`,
+		`create table if not exists names (id integer not null, name text)`,
+		`create table if not exists tags (id integer not null, tag text)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = r.db.Exec(stmt); err != nil {
+			r.err = err
+			return
+		}
+	}
+}
+
+func (r *repository) error() error {
+	if r == nil {
+		return fmt.Errorf("repository is nil")
+	}
+	r.o.Do(r.init)
+	if r.db == nil {
+		r.err = fmt.Errorf("db not initialized")
+	}
+	return r.err
 }
