@@ -23,6 +23,7 @@ func newRepository() storage.Repository {
 }
 
 type repository struct {
+	sync.Mutex
 	o   sync.Once
 	err error
 
@@ -40,6 +41,7 @@ func (r *repository) AllNames() []string {
 		r.err = err
 		return nil
 	}
+	defer rows.Close()
 
 	names := []string{}
 	var name string
@@ -65,6 +67,7 @@ func (r *repository) AllTags() []string {
 		r.err = err
 		return nil
 	}
+	defer rows.Close()
 
 	tags := []string{}
 	var tag string
@@ -103,13 +106,16 @@ func (r *repository) Add(o storage.Object) error {
 		return err
 	}
 
+	r.Lock()
+	defer r.Unlock()
+
 	_, err = stmt.Exec(int64(o.Hash()), o.Size(), o.RawData())
 	if err != nil {
 		r.err = err
 		return err
 	}
 
-	stmt, err = r.db.Prepare(`insert or update into names (id, name) values (?, ?)`)
+	stmt, err = r.db.Prepare(`insert or ignore into names (id, name) values (?, ?)`)
 	if err != nil {
 		r.err = err
 		return err
@@ -122,8 +128,12 @@ func (r *repository) Add(o storage.Object) error {
 			return err
 		}
 	}
+	if err = stmt.Close(); err != nil {
+		r.err = err
+		return err
+	}
 
-	stmt, err = r.db.Prepare(`insert or update into tags (id, tag) values (?, ?)`)
+	stmt, err = r.db.Prepare(`insert or ignore into tags (id, tag) values (?, ?)`)
 	if err != nil {
 		r.err = err
 		return err
@@ -136,6 +146,10 @@ func (r *repository) Add(o storage.Object) error {
 			return err
 		}
 	}
+	if err = stmt.Close(); err != nil {
+		r.err = err
+		return err
+	}
 	return nil
 }
 
@@ -143,7 +157,7 @@ func (r *repository) init() {
 	if r.err != nil {
 		return
 	}
-	db, err := sql.Open("sqlite3", r.path)
+	db, err := sql.Open("sqlite3", r.path+"?_busy_timeout=5000&mode=rwc&cache=shared")
 	if err != nil {
 		r.err = err
 		return
